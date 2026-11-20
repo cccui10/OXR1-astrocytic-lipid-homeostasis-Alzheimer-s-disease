@@ -1,0 +1,278 @@
+==============================================================================
+Figure S5 - Analysis Code
+==============================================================================
+This document contains the analysis code for Figure S5 and its source-data workbook
+(FigureS5_source_data_EN.xlsx). The structure follows Figure3_code_EN.txt: each
+section states the worksheet, the method and the R code that reproduces the panel.
+
+==============================================================================
+0  Overview
+==============================================================================
+
+Data sheet : all worksheets
+
+Method     : Figure S5 supports Figure 3 with the enrichment of up-regulated genes, the positive-ion-mode metabolomics data and the targeted fatty acid data, and contains the pathway-level breakdown of the lipid metabolism categories used in Figure 3e.
+
+Packages   : R 4.2 or newer; ggplot2, dplyr, tidyr, readxl, ComplexHeatmap, circlize
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+# Every section reads the accompanying workbook, so the code runs without any
+# other input file. Run the script from the Code folder; the workbook is read from the
+# sibling Source_Data folder.
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+XLS <- file.path("..", "Source_Data", "FigureS5_source_data_EN.xlsx")
+sh  <- function(n) read_excel(XLS, sheet = n)
+
+
+==============================================================================
+1  Panel a - enrichment of up-regulated genes
+==============================================================================
+
+Data sheet : S5a_GO_up
+
+Method     : GO (biological process, cellular component, molecular function) and KEGG over-representation analysis of the up-regulated gene set. The x axis is the gene ratio, symbol size the gene count and colour the -log10 adjusted p value; rows are grouped by database.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S5a_GO_up")
+d$Category <- factor(d$Category, levels = c("GO_BP", "GO_CC", "GO_MF", "KEGG"))
+d$Description <- factor(d$Description,
+                        levels = rev(unique(d$Description[order(d$Category,
+                                                               -d$`-log10(p.adjust)`)])))
+
+ggplot(d, aes(x = GeneRatio_Num, y = Description,
+              size = Count, colour = `-log10(p.adjust)`)) +
+  geom_point() +
+  facet_grid(Category ~ ., scales = "free_y", space = "free_y") +
+  scale_colour_gradientn(colours = c("#4575B4", "#B2182B")) +
+  scale_size_continuous(range = c(1.5, 5), name = "Count") +
+  labs(x = "Gene Ratio", y = NULL,
+       title = "UP-regulated Genes Enrichment analysis") +
+  theme_bw(base_size = 9) +
+  theme(strip.text.y = element_text(angle = 270, face = "bold"))
+
+
+==============================================================================
+2  Panel b - lipid metabolism pathway categories
+==============================================================================
+
+Data sheet : S5b_LipidCat_counts
+
+Method     : Number of pathways assigned to each of the six functional categories of lipid metabolism.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+s <- sh("S5b_LipidCat_counts") %>%
+  mutate(Category = factor(Category, levels = Category[order(n_pathways)]))
+
+ggplot(s, aes(x = n_pathways, y = Category, fill = Category)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = n_pathways), hjust = -0.3, size = 3.5) +
+  scale_fill_manual(values = c("#E64B35", "#F39B7F", "#B0B0B0",
+                               "#3C5488", "#00A087", "#4DBBD5"), guide = "none") +
+  labs(x = "Mean Number", y = "Term",
+       title = "Lipid Metabolism Pathway Categories") +
+  theme_minimal(base_size = 11)
+
+
+==============================================================================
+3  Panel c - fatty acid metabolism pathways
+==============================================================================
+
+Data sheet : S5c_FA_pathways
+
+Method     : Normalised enrichment scores of the 66 significant lipid-metabolism pathways, faceted by functional category; colour encodes -log10 adjusted p value.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S5c_FA_pathways")
+d$Description <- factor(d$Description,
+                        levels = rev(d$Description[order(d$Category, d$NES)]))
+
+ggplot(d, aes(x = NES, y = Description,
+              colour = `-log10(p.adjust)`, size = `-log10(p.adjust)`)) +
+  geom_point() +
+  facet_grid(Category ~ ., scales = "free_y", space = "free_y") +
+  scale_colour_gradientn(colours = c("#4575B4", "#FFFFBF", "#D73027"),
+                         name = "-log10(p.adjust)") +
+  labs(x = "NES", y = NULL, title = "FA Metabolism Pathways") +
+  theme_bw(base_size = 8) +
+  theme(strip.text.y = element_text(angle = 270, face = "bold"))
+
+
+==============================================================================
+4  Panel d - differential metabolites, positive ion mode
+==============================================================================
+
+Data sheet : S5d_Volcano_POS
+
+Method     : Metabolite intensities were transformed as log2(x + 1); Welch t-tests were applied and p values were adjusted by the Benjamini-Hochberg procedure. Thresholds are |log2FC| > 0.58 and p < 0.05.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S5d_Volcano_POS") %>%
+  mutate(Significant = factor(Significant,
+                              levels = c("Down-regulated", "Not Significant", "Up-regulated")))
+
+ggplot(d, aes(x = log2FC, y = `-log10(p_value)`, colour = Significant)) +
+  geom_point(size = 2.2, alpha = 0.8) +
+  geom_vline(xintercept = c(-0.58, 0.58), linetype = "dashed") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  scale_colour_manual(values = c("#2E86AB", "#B8B8B8", "#D62828")) +
+  labs(x = "log2(Fold Change) [SH/NC]", y = "-log10(p-value)",
+       title = "Volcano Plot of Differential Metabolites (POS)",
+       subtitle = "Positive ion mode (n = 5 NC vs 5 SH samples)",
+       caption = sprintf("Thresholds: |log2FC| > 0.58, p < 0.05\nSignificant metabolites: %d up, %d down",
+                         sum(d$Significant == "Up-regulated"),
+                         sum(d$Significant == "Down-regulated"))) +
+  theme_classic(base_size = 11)
+
+
+==============================================================================
+5  Panel e - significantly regulated metabolites by chemical class (positive ion mode)
+==============================================================================
+
+Data sheet : S5e_ClassI_counts_POS
+
+Method     : Significant metabolites of panel d were counted per chemical class and split into up- and down-regulated species.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S5e_ClassI_counts_POS") %>% rename(Class = ClassI)
+
+long <- d %>%
+  select(Class, Up_regulated, Down_regulated) %>%
+  pivot_longer(-Class, names_to = "Regulation", values_to = "Count") %>%
+  mutate(Regulation = recode(Regulation,
+                             Up_regulated   = "Up-regulated",
+                             Down_regulated = "Down-regulated"))
+
+ggplot(long, aes(x = Count, y = Class, fill = Regulation)) +
+  geom_col(width = 0.7) +
+  scale_fill_manual(values = c("Up-regulated" = "#d62828",
+                               "Down-regulated" = "#2e86ab")) +
+  labs(x = "Number of Metabolites", y = NULL,
+       title = "Number of Significantly Regulated Metabolites in Class I (POS)") +
+  theme_minimal(base_size = 12)
+
+
+==============================================================================
+6  Panel f - fatty acid metabolites (positive ion mode)
+==============================================================================
+
+Data sheet : S5f_FA_heatmap_POS
+
+Method     : Single-column heatmap of log2 fold change for the fatty acids detected in positive ion mode; rows are clustered and asterisks mark the significance of each species.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+library(ComplexHeatmap)
+library(circlize)
+
+d <- sh("S5f_FA_heatmap_POS")
+
+m <- matrix(d$log2FC, ncol = 1)
+rownames(m) <- d$Name
+colnames(m) <- "log2FC (SH/NC)"
+
+lim <- max(abs(d$log2FC))
+
+sig <- setNames(d$stars, d$Name)
+
+Heatmap(m,
+        name = "log2FC",
+        col = colorRamp2(c(-lim, 0, lim), c("#2e86ab", "#FFFFFF", "#d62828")),
+        cluster_rows = TRUE, cluster_columns = FALSE,
+        cell_fun = function(j, i, x, y, w, h, fill) {
+          s <- sig[rownames(m)[i]]
+          if (!is.na(s) && s != "") grid.text(s, x, y)
+        },
+        row_names_side = "left",
+        column_title = "Fatty Acid Metabolites(POS)")
+
+
+==============================================================================
+7  Panel g - PCA of targeted fatty acids
+==============================================================================
+
+Data sheet : S5g_PCA_input_log2 and S5g_PCA_tFA_scores
+
+Method     : Fatty acid intensities were transformed as log2(x + 1) and scaled; principal components were computed across the nine samples of the FAD_NC, WT and FAD_SH groups. The score plot shows PC1 and PC2 with 95% confidence ellipses.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+m <- sh("S5g_PCA_input_log2")
+X <- t(as.matrix(m[, -1]))
+rownames(X) <- colnames(m)[-1]
+
+pca <- prcomp(X, center = TRUE, scale. = TRUE)
+sc  <- data.frame(pca$x[, 1:2],
+                  Group = c(rep("FAD_NC", 3), rep("WT", 3), rep("FAD_SH", 3)))
+
+ggplot(sc, aes(x = PC1, y = PC2, colour = Group)) +
+  geom_point(size = 2.5) +
+  stat_ellipse(level = 0.95, show.legend = FALSE) +
+  labs(title = "PCA(Targeted FA metabolism)") +
+  theme_classic(base_size = 11)
+
+round(100 * summary(pca)$importance[2, 1:2], 1)
+
+
+==============================================================================
+8  Panel h - lipidomics in positive ion mode, FAD_SH versus FAD_NC
+==============================================================================
+
+Data sheet : S5h_Volcano_POS_lipidomics
+
+Method     : For each lipid, log2 fold change was computed from group means and a Welch t-test was applied. Species with p < 0.05 are highlighted; the horizontal and vertical guides mark p = 0.05 and |log2FC| = 1.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S5h_Volcano_POS_lipidomics") %>%
+  mutate(Significant = factor(Significant, levels = c("NS", "Significant")))
+
+ggplot(d, aes(x = log2FC, y = `-log10(p_value)`, colour = Significant)) +
+  geom_point(size = 1.6, alpha = 0.8) +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", linewidth = 0.3) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", linewidth = 0.3) +
+  scale_colour_manual(values = c(NS = "grey70", Significant = "#D73027")) +
+  labs(x = "log2Fold Change (FAD_SH/FAD_NC)", y = "-log10 P value",
+       title = "POS Mode: FAD_SH vs FAD_NC") +
+  theme_classic(base_size = 11)
+
+
+==============================================================================
+End of document
+==============================================================================

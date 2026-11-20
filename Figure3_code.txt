@@ -1,0 +1,494 @@
+==============================================================================
+Figure 3 - Analysis Code
+==============================================================================
+This document contains the analysis code for Figure 3 and its source-data workbook
+(Figure3_source_data_EN.xlsx). The code is organised by panel. Every section states
+the worksheet that holds the underlying values, the statistical method used, and the
+R code that reproduces the panel from that worksheet.
+
+Analysis outline
+  RNA sequencing      FAD_SH versus FAD_SH_NC, three mice per group; DESeq2,
+                      then GO and KEGG over-representation analysis and GSEA.
+  Metabolomics        untargeted, negative ion mode; five NC and five shOxr1 samples;
+                      log2(x + 1) transformation, Welch t-test, Benjamini-Hochberg.
+  Targeted fatty acids three versus three samples; Welch t-test on group means.
+  Lipidomics          positive and negative ion modes; three versus three samples.
+
+The workbook is self-contained: the code reads values from the worksheets, so no
+other input file is required.
+
+==============================================================================
+0  Overview
+==============================================================================
+
+Data sheet : all worksheets
+
+Method     : Figure 3 reports the effect of astrocytic Oxr1 knockdown on the lipid landscape. Four data sets are combined: (i) hippocampal RNA sequencing of FAD_SH versus FAD_SH_NC mice (three animals per group) analysed by GO, KEGG and GSEA; (ii) untargeted metabolomics in negative ion mode (five NC and five shOxr1 samples); (iii) a targeted fatty acid panel (three versus three); (iv) lipidomics in positive and negative ion modes (three versus three).
+
+Packages   : R 4.2 or newer; ggplot2, dplyr, tidyr, readxl, ComplexHeatmap, circlize, aPEAR, clusterProfiler, fgsea
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+# Every section reads the accompanying workbook, so the code runs without any
+# other input file. Run the script from the Code folder; the workbook is read from the
+# sibling Source_Data folder.
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+XLS <- file.path("..", "Source_Data", "Figure3_source_data_EN.xlsx")
+sh  <- function(n) read_excel(XLS, sheet = n)
+
+
+==============================================================================
+1  Panel a - GO enrichment of down-regulated genes (top 5 per ontology)
+==============================================================================
+
+Data sheet : F3a_GO_top5
+
+Method     : Gene Ontology over-representation analysis of the down-regulated gene set, one bar per term, grouped by ontology. Bar length is the gene count; the label inside each bar is the Benjamini-Hochberg adjusted p value.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("F3a_GO_top5")
+d$Class_Label <- factor(d$Class_Label,
+                        levels = c("Biological Process", "Cellular Component", "Molecular Function"))
+d <- d %>% arrange(Class_Label, p.adjust) %>%
+  mutate(term = factor(Short_Description, levels = rev(unique(Short_Description))))
+
+ggplot(d, aes(x = Count, y = term, fill = Class)) +
+  geom_col(width = 0.7, colour = "black", linewidth = 0.3) +
+  geom_text(aes(label = p_label), y = d$Count * 0.5, colour = "white", size = 3) +
+  facet_wrap(~ Class_Label, scales = "free_y", ncol = 1) +
+  scale_fill_manual(values = c("BP" = "#8DB2D9", "CC" = "#E79797", "MF" = "#B5D99C")) +
+  labs(x = "Gene Count", y = NULL,
+       title = "Downregulated Genes GO Enrichment (TOP5)") +
+  theme_bw(base_size = 10) +
+  theme(strip.text = element_text(face = "bold"))
+
+
+==============================================================================
+2  Panel b - GO enrichment map
+==============================================================================
+
+Data sheet : F3b_GO_network and F3b_GO_BP_input
+
+Method     : Enrichment map of the significant GO biological-process terms. Pathway similarity is the Jaccard index of shared genes; terms are clustered hierarchically (complete linkage, k = 10, clusters with fewer than three terms merged) and the network is laid out by aPEAR with an inner cutoff of 0.4 and an outer cutoff of 0.6. Node size is the gene count, node colour the -log10 adjusted p value.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+library(aPEAR)
+library(igraph)
+
+go <- sh("F3b_GO_BP_input")
+cl <- sh("F3b_GO_network")
+
+sig <- go %>%
+  filter(p.adjust < 0.05) %>%
+  mutate(geneID = gsub("[,; \t]+", "/", geneID))
+
+sim <- pathwaySimilarity(as.data.frame(sig), geneCol = "geneID", method = "jaccard")
+hc  <- hclust(as.dist(1 - sim), method = "complete")
+
+clusters_raw <- cutree(hc, k = 10)
+keep         <- names(table(clusters_raw))[table(clusters_raw) >= 3]
+clusters     <- clusters_raw[clusters_raw %in% keep]
+
+graph <- aPEAR:::enrichmentNetwork.connect(sim = sim[names(clusters), names(clusters)],
+                                           clusters = clusters,
+                                           innerCutoff = 0.4, outerCutoff = 0.6)
+coords <- graph$coordinates
+edges  <- graph$edges
+
+coords <- coords %>%
+  left_join(sig %>% select(Description, Count, p.adjust) %>%
+              mutate(logP = -log10(p.adjust)),
+            by = c("ID" = "Description"))
+
+# Node coordinates depend on the force-directed layout of aPEAR; the cluster
+# membership and the per-term statistics are given in worksheet F3b_GO_network.
+
+
+==============================================================================
+3  Panel c - KEGG enrichment of down-regulated genes
+==============================================================================
+
+Data sheet : F3c_KEGG_top10
+
+Method     : KEGG over-representation analysis of the down-regulated gene set, top ten pathways by gene count. Bar fill indicates the KEGG level-1 category; the number at the bar end is the gene count and asterisks encode the adjusted p value.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("F3c_KEGG_top10") %>%
+  arrange(Count) %>%
+  mutate(Description = factor(Description, levels = Description))
+
+ggplot(d, aes(x = Count, y = Description, fill = category)) +
+  geom_col(width = 0.7, colour = "black", linewidth = 0.3) +
+  geom_text(aes(label = Count), hjust = -0.2, size = 3.5) +
+  geom_text(aes(label = Significance), hjust = -0.5, vjust = 0.8, size = 4, colour = "red") +
+  scale_fill_manual(values = c("#6b598a", "#b2182b", "#d95f02"), name = "Category") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.2))) +
+  labs(x = "Gene Count", y = NULL,
+       title = "KEGG Pathway Enrichment",
+       subtitle = "Pathways ordered by gene count") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.major.y = element_blank(),
+        panel.border = element_rect(fill = NA, colour = "black"),
+        legend.position = "bottom")
+
+
+==============================================================================
+4  Panel d - GSEA of all genes
+==============================================================================
+
+Data sheet : F3d_GSEA_all_genes
+
+Method     : Gene set enrichment analysis of the complete ranked gene list, run separately for GO biological process and KEGG. The x axis is -log10 adjusted p value, the y axis is -NES (all reported enrichment scores are negative, so -NES is positive), point size is the gene-set size and colour encodes -log10 adjusted p value. Facets correspond to the two databases.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("F3d_GSEA_all_genes") %>%
+  mutate(logP = `-log10(p.adjust)`, neg_NES = -NES) %>%
+  filter(neg_NES >= 0, neg_NES <= 2.5)
+
+ggplot(d, aes(x = logP, y = neg_NES, size = setSize, colour = logP)) +
+  geom_point(alpha = 0.8) +
+  facet_wrap(~ Database, scales = "free") +
+  scale_colour_gradient(low = "#4575B4", high = "#D73027", name = "-log10(p.adjust)") +
+  scale_size_continuous(range = c(2, 8), name = "Set size") +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed", colour = "grey50") +
+  labs(x = "-log10(adjusted p-value)", y = "-NES",
+       title = "All genes GSEA Enrichment Results (Down-regulated)") +
+  theme_minimal(base_size = 12)
+
+
+==============================================================================
+5  Panel e - lipid metabolism categories
+==============================================================================
+
+Data sheet : F3e_LipidCat_summary and F3e_LipidCat_pathways
+
+Method     : Sixty-six significant lipid-metabolism pathways were assigned to six functional categories. For each category the figure plots the negative mean normalised enrichment score against -log10 of the mean adjusted p value; symbol size is the number of pathways in the category.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+p <- sh("F3e_LipidCat_pathways")
+
+s <- p %>%
+  group_by(Category) %>%
+  summarise(n = n(),
+            mean_NES  = mean(NES),
+            mean_padj = mean(p.adjust),
+            .groups = "drop") %>%
+  mutate(x = -log10(mean_padj), y = -mean_NES)
+
+ggplot(s, aes(x = x, y = y)) +
+  geom_point(aes(size = n, colour = x)) +
+  scale_size_continuous(range = c(3, 9), name = "Number of pathways") +
+  scale_colour_gradient(low = "#4575B4", high = "#D73027", name = "-log10(mean p.adjust)") +
+  geom_text(aes(label = Category), vjust = -1.3, size = 3, check_overlap = TRUE) +
+  scale_y_continuous(limits = c(1.7, 2.0)) +
+  labs(x = "-log10(mean p.adjust)", y = "-Mean NES",
+       title = "Lipid Metabolism Categories") +
+  theme_minimal(base_size = 12)
+
+
+==============================================================================
+6  Panel f - PCA of untargeted metabolomics (negative ion mode)
+==============================================================================
+
+Data sheet : F3f_PCA_input_log2 and F3f_PCA_Neg_scores
+
+Method     : Metabolite intensities were transformed as log2(x + 1) and centred; principal components were computed across the ten samples (five NC and five shOxr1). The score plot shows PC1 and PC2 with 95% confidence ellipses.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+m <- sh("F3f_PCA_input_log2")
+X <- t(as.matrix(m[, -1]))
+rownames(X) <- colnames(m)[-1]
+
+pca <- prcomp(X, center = TRUE, scale. = FALSE)
+sc  <- data.frame(pca$x[, 1:2],
+                  Group = c(rep("NC", 5), rep("shOxr1", 5)))
+
+ggplot(sc, aes(x = PC1, y = PC2, colour = Group)) +
+  geom_point(size = 2.5) +
+  stat_ellipse(level = 0.95, show.legend = FALSE) +
+  labs(title = "PCA ( Neg. )") +
+  theme_classic(base_size = 11)
+
+round(100 * summary(pca)$importance[2, 1:2], 1)
+
+
+==============================================================================
+7  Panel g - differential metabolites, negative ion mode
+==============================================================================
+
+Data sheet : F3g_Volcano_Neg
+
+Method     : For each metabolite, log2 fold change was computed from log2(x + 1) group means and a Welch t-test was applied to the log2 intensities; p values were adjusted by the Benjamini-Hochberg procedure. Thresholds for significance are |log2FC| > log2(1.5) = 0.585 and p < 0.05.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("F3g_Volcano_Neg") %>%
+  mutate(Significant = factor(Significant,
+                              levels = c("Down-regulated", "Not Significant", "Up-regulated")))
+
+ggplot(d, aes(x = log2FC, y = `-log10(p_value)`, colour = Significant)) +
+  geom_point(size = 2.2, alpha = 0.8) +
+  geom_vline(xintercept = c(-0.585, 0.585), linetype = "dashed") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  scale_colour_manual(values = c("#2E86AB", "#B8B8B8", "#D62828")) +
+  labs(x = "log2(Fold Change) [SH/NC]", y = "-log10(p-value)",
+       title = "Differential Metabolites",
+       subtitle = "Negative ion mode (n = 5 NC vs 5 SH samples)",
+       caption = sprintf("Thresholds: |log2FC| > 0.58, p < 0.05\nSignificant metabolites: %d up, %d down",
+                         sum(d$Significant == "Up-regulated"),
+                         sum(d$Significant == "Down-regulated"))) +
+  theme_classic(base_size = 11)
+
+
+==============================================================================
+8  Panel h - significantly regulated metabolites by chemical class
+==============================================================================
+
+Data sheet : F3h_ClassI_counts
+
+Method     : Significant metabolites of panel g were counted per chemical class and split into up- and down-regulated species; the number at the end of each bar is the total for that class.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("F3h_ClassI_counts") %>% rename(Class = ClassI)
+
+long <- d %>%
+  select(Class, Up_regulated, Down_regulated) %>%
+  pivot_longer(-Class, names_to = "Regulation", values_to = "Count") %>%
+  mutate(Regulation = recode(Regulation,
+                             Up_regulated   = "Up-regulated",
+                             Down_regulated = "Down-regulated"))
+
+long <- long %>%
+  group_by(Class) %>% mutate(Total = sum(Count)) %>% ungroup() %>%
+  mutate(Class = factor(Class, levels = d$Class[order(d$Total_regulated)]))
+
+ggplot(long, aes(x = Count, y = Class, fill = Regulation)) +
+  geom_col(position = position_stack(reverse = TRUE), width = 0.7) +
+  geom_text(data = distinct(long, Class, Total),
+            aes(x = Total, y = Class, label = Total),
+            inherit.aes = FALSE, hjust = -0.2, size = 3.5) +
+  geom_text(aes(label = Count),
+            position = position_stack(vjust = 0.5, reverse = TRUE),
+            inherit.aes = FALSE, size = 3, colour = "white", fontface = "bold") +
+  scale_fill_manual(values = c("Up-regulated" = "#d62828",
+                               "Down-regulated" = "#2e86ab")) +
+  labs(x = "Number of Metabolites", y = NULL,
+       title = "Number of Significantly Regulated Metabolites in Class I") +
+  theme_minimal(base_size = 12)
+
+
+==============================================================================
+9  Panel i - fatty acid metabolites
+==============================================================================
+
+Data sheet : F3i_FA_heatmap
+
+Method     : Heatmap of the fatty acid metabolites that change between groups. Cells are mean log2 intensities of the NC and SH groups; rows are ordered by log2 fold change and annotated with regulation status and hydroxylation; asterisks denote the adjusted p value.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+library(ComplexHeatmap)
+library(circlize)
+
+d <- sh("F3i_FA_heatmap")
+
+m <- as.matrix(d[, c("NC_mean_log", "SH_mean_log")])
+rownames(m) <- d$DisplayName
+colnames(m) <- c("NC", "SH")
+
+col_fun <- colorRamp2(c(min(m), median(m), max(m)),
+                      c("#4575B4", "#FFFFBF", "#D73027"))
+
+row_ha <- rowAnnotation(
+  Significance  = d$Significance,
+  Hydroxylated = d$Hydroxylated,
+  col = list(Significance  = c(Up = "#C5B4E3", NotSig = "grey90"),
+             Hydroxylated = c(Yes = "#B8D9A5", No = "grey90")))
+
+Heatmap(m,
+        name = "Expression\n(log scale)",
+        col = col_fun,
+        cluster_rows = TRUE, cluster_columns = FALSE,
+        row_names_side = "left",
+        left_annotation = row_ha,
+        right_annotation = rowAnnotation(p = anno_text(d$p_symbol)),
+        row_title = "Fatty Acid Metabolites")
+
+
+==============================================================================
+10  Panel j - targeted fatty acids, sh Oxr1_FAD versus sh NC_FAD
+==============================================================================
+
+Data sheet : F3j_Volcano_tFA
+
+Method     : The targeted fatty acid panel contains 48 fatty acids measured in three FAD_SH and three FAD_SH_NC samples. log2 fold change is the log2 ratio of group means; p values are from Welch t-tests. Thresholds are |log2FC| > 0.26 and p < 0.05.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("F3j_Volcano_tFA")
+
+ggplot(d, aes(x = log2FC, y = neg_log10_p, colour = diff)) +
+  geom_point(size = 2, alpha = 0.8) +
+  geom_vline(xintercept = c(-0.26, 0.26), linetype = "dashed", linewidth = 0.3) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", linewidth = 0.3) +
+  scale_colour_manual(values = c(Up = "#ae2b41", Down = "#3182BD", NotSig = "grey70")) +
+  labs(x = expression(log[2]~(Fold~Change)),
+       y = expression(-log[10]~(P-value)),
+       title = "sh Oxr1_FAD vs sh NC_FAD") +
+  theme_classic(base_size = 11) +
+  theme(legend.title = element_blank())
+
+
+==============================================================================
+11  Panel k - differentially changed fatty acids by class
+==============================================================================
+
+Data sheet : F3k_tFA_bars
+
+Method     : The significantly changed fatty acids are grouped into saturated, monounsaturated, long-chain monounsaturated and trans fatty acids. Bars give the mean log2 intensity of each group; error bars are standard deviations; numbers above the bars are Welch t-test p values.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("F3k_tFA_bars") %>%
+  mutate(Class_Label = factor(Class_Label,
+                              levels = c("Saturated FA", "Monounsaturated FA",
+                                         "LC monounsaturated FA", "Trans FA")))
+
+long <- d %>%
+  select(metabolite, Class_Label, log2_mean_fad, log2_mean_fad_nc) %>%
+  pivot_longer(c(log2_mean_fad, log2_mean_fad_nc),
+               names_to = "Group", values_to = "y") %>%
+  mutate(Group = recode(Group,
+                        log2_mean_fad    = "FAD_SH",
+                        log2_mean_fad_nc = "FAD_SH_NC"))
+
+ggplot(long, aes(x = metabolite, y = y, fill = Group)) +
+  geom_col(position = position_dodge(0.8), width = 0.75) +
+  geom_text(data = d,
+            aes(x = metabolite, y = log2_mean_fad + 0.4,
+                label = formatC(p_value, 3, format = "e")),
+            inherit.aes = FALSE, size = 2.6) +
+  facet_wrap(~ Class_Label, scales = "free_x", nrow = 1) +
+  scale_fill_manual(values = c(FAD_SH = "#5B8FA8", FAD_SH_NC = "#E08D8D")) +
+  labs(x = NULL, y = "log2 Expression") +
+  theme_bw(base_size = 9) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+
+==============================================================================
+12  Panel l - lipidomics heatmap (negative ion mode)
+==============================================================================
+
+Data sheet : F3l_Lipidomics_heatmap
+
+Method     : Lipid species are grouped by lipid class and ordered by log2 fold change within each class; colour encodes log2 fold change between groups.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+library(ComplexHeatmap)
+library(circlize)
+
+d <- sh("F3l_Lipidomics_heatmap") %>% arrange(Class, desc(log2FC))
+
+m <- matrix(d$log2FC, ncol = 1)
+rownames(m) <- d$Lipid_Name
+colnames(m) <- "log2FC"
+
+Heatmap(m,
+        name = "log2FC",
+        col = colorRamp2(c(min(m), 0, max(m)), c("#4b619e", "#F7F7F7", "#b2182b")),
+        cluster_rows = FALSE, cluster_columns = FALSE,
+        row_split = d$Class, row_gap = unit(1, "mm"),
+        row_names_side = "right",
+        row_title = unique(d$Class),
+        row_title_rot = 90,
+        column_title = "Lipidomics (Neg.)")
+
+
+==============================================================================
+13  Panel m - integrated lipid class alterations (positive ion mode)
+==============================================================================
+
+Data sheet : F3m_LipidClass_POS
+
+Method     : Lipid species with |log2FC| > log2(1.5) were summarised per lipid class. The lollipop shows the mean log2 fold change of each class (colour scale); the adjacent bubbles give the number of increased and decreased species per class, scaled to the number of features in the class.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("F3m_LipidClass_POS")
+d$Class <- factor(d$Class, levels = d$Class[order(d$mean_log2FC)])
+
+p1 <- ggplot(d, aes(x = mean_log2FC, y = Class)) +
+  geom_segment(aes(x = 0, xend = mean_log2FC, yend = Class), colour = "grey60") +
+  geom_point(aes(colour = mean_log2FC), size = 3) +
+  scale_colour_gradient2(low = "#4575B4", mid = "white", high = "#D73027", midpoint = 0) +
+  labs(x = "Mean log2Fold Change (FAD_SH / FAD_NC)", y = NULL) +
+  theme_minimal(base_size = 10)
+
+p2 <- ggplot(d, aes(y = Class)) +
+  geom_point(aes(x = 2, size = Up),   colour = "#D73027") +
+  geom_point(aes(x = 3, size = Down), colour = "#4575B4") +
+  scale_size_continuous(range = c(1, 8), name = "Number of species") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 10)
+
+p1
+p2
+
+
+==============================================================================
+End of document
+==============================================================================

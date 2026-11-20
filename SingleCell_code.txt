@@ -1,0 +1,612 @@
+==============================================================================
+Single-cell panels of Figure 1, Figure S1 and Figure S2 - Analysis Code
+==============================================================================
+This document contains the analysis code for every panel of Figure 1, Figure S1 and Figure S2 that is
+derived from single-cell data, together with the source-data workbook
+Figure1_S1_S2_singlecell_source_data_EN.xlsx. The code is organised by panel: each section names the
+worksheet that holds the underlying values, states the method, and gives the R code that reproduces the
+panel from that worksheet.
+
+Dataset
+  Single-cell RNA sequencing of Abeta-treated neural cultures versus scrambled control.
+  9,799 cells after quality control; clustering at resolution 0.1; four annotated cell types;
+  reactive astrocytes re-clustered at resolution 0.3 into three subclusters.
+  Processing: Seurat 5 (normalisation, variable features, PCA, UMAP, Louvain clustering,
+  Wilcoxon rank-sum tests with Benjamini-Hochberg adjustment).
+
+Additional data sources
+  Figure S1h            SEA-AD human single-nucleus RNA sequencing (middle temporal gyrus and
+                        dorsolateral prefrontal cortex); donor-level pseudobulk CPM.
+  Figure S2j            Deep multilayer brain proteome of AD, AsymAD and control brains
+                        (Bai et al.); log2 protein ratios.
+  Figure S2h and S2i    MIST database of experimentally validated and inferred protein interactions.
+
+The workbook is self-contained: the code reads values from the worksheets, so no other input file is
+required.
+
+==============================================================================
+0  Overview
+==============================================================================
+
+Data sheet : all worksheets
+
+Method     : The single-cell panels of Figure 1, Figure S1 and Figure S2 come from one dataset of Abeta-treated neural cultures profiled by droplet-based single-cell RNA sequencing. After quality control, 9,799 cells were retained from two conditions (Abeta 3 weeks and scrambled control), clustered at resolution 0.1 and annotated into four cell types: basal neurons, synaptic neurons, astrocytes and reactive astrocytes. Reactive astrocytes were re-clustered at resolution 0.3 into three subclusters. All values in the workbook were produced with Seurat 5.0 (log-normalisation, UMAP, Wilcoxon tests) and are reproduced by the code below.
+
+Packages   : R 4.2 or newer; Seurat 5, ggplot2, dplyr, tidyr, readxl, ComplexHeatmap (optional)
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+XLS <- file.path("..", "Source_Data", "Figure1_S1_S2_singlecell_source_data_EN.xlsx")
+sh  <- function(n) read_excel(XLS, sheet = n)
+
+
+==============================================================================
+1  Figure 1D - cell type annotation and reactive astrocyte subclusters
+==============================================================================
+
+Data sheet : SC_cells_UMAP and SC_subcluster_UMAP
+
+Method     : UMAP coordinates and cell-type labels of all 9,799 cells; the reactive astrocyte compartment is shown separately with its three subclusters and OXR1 expression.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+cells <- sh("SC_cells_UMAP")
+
+ggplot(cells, aes(UMAP_1, UMAP_2, colour = cell_type)) +
+  geom_point(size = 0.4) +
+  labs(x = "UMAP_1", y = "UMAP_2", colour = "Cell type",
+       title = "Cell Type Annotation") +
+  theme_classic(base_size = 10) +
+  theme(legend.position = "right")
+
+sub <- sh("SC_subcluster_UMAP")
+
+ggplot(sub, aes(UMAP_1, UMAP_2, colour = subcluster)) +
+  geom_point(size = 0.8) +
+  labs(x = "UMAP_1", y = "UMAP_2", colour = "Subcluster",
+       title = "Reactive Astrocyte Subclusters") +
+  theme_classic(base_size = 10)
+
+ggplot(sub, aes(UMAP_1, UMAP_2, colour = OXR1_logexpr)) +
+  geom_point(size = 0.8) +
+  scale_colour_gradientn(colours = c("#2166AC", "#F7F7F7", "#B2182B"),
+                         name = "OXR1 expression") +
+  facet_wrap(~ condition, nrow = 1) +
+  labs(x = "UMAP_1", y = "UMAP_2") +
+  theme_classic(base_size = 10)
+
+
+==============================================================================
+2  Figure S1e - key marker genes across cell types
+==============================================================================
+
+Data sheet : SC_dotplot_markers
+
+Method     : Mean log-normalised expression and percentage of expressing cells for eight marker genes in the four annotated cell types. Dot size is the percentage of expressing cells; colour is the mean expression scaled across cell types (z score).
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("SC_dotplot_markers")
+d$gene <- factor(d$gene, levels = unique(d$gene))
+d$cell_type <- factor(d$cell_type, levels = rev(unique(d$cell_type)))
+
+ggplot(d, aes(x = gene, y = cell_type)) +
+  geom_point(aes(size = pct_expressed, colour = avg_scaled)) +
+  scale_colour_gradient2(low = "#4575B4", mid = "white", high = "#D73027",
+                         midpoint = 0, name = "Average\nExpression") +
+  scale_size_continuous(range = c(1, 6), name = "Percent\nExpressed") +
+  labs(x = NULL, y = NULL, title = "Key Marker Genes Expression") +
+  theme_bw(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+==============================================================================
+3  Figure S1f - UMAP feature plots of marker genes
+==============================================================================
+
+Data sheet : SC_featureplot
+
+Method     : Per-cell expression of twelve marker genes displayed on the UMAP embedding; the colour scale is the log-normalised expression of the gene.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("SC_featureplot")
+genes <- c("STC2", "NEFL", "SCG2", "NRG1", "SYN3", "CDH18",
+           "AQP4-AS1", "NFIA-AS2", "VCAN-AS1", "MAML2", "DOCK10", "PCDH15")
+
+long <- d %>%
+  select(UMAP_1, UMAP_2, all_of(genes)) %>%
+  pivot_longer(all_of(genes), names_to = "gene", values_to = "expression")
+
+ggplot(long, aes(UMAP_1, UMAP_2, colour = expression)) +
+  geom_point(size = 0.2) +
+  scale_colour_gradientn(colours = c("#EDEDED", "#FDBE85", "#D94801", "#7F2704")) +
+  facet_wrap(~ gene, ncol = 4) +
+  labs(x = "UMAP_1", y = "UMAP_2", colour = "Expression") +
+  theme_classic(base_size = 8)
+
+
+==============================================================================
+4  Figure S1g - cell type proportion per sample
+==============================================================================
+
+Data sheet : SC_celltype_composition
+
+Method     : Number of cells and proportion of each cell type in the two samples.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("SC_celltype_composition")
+
+ggplot(d, aes(x = sample, y = proportion, fill = cell_type)) +
+  geom_col(width = 0.7) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = NULL, y = "Proportion", fill = "Cell type",
+       title = "Cell Type Percentage by Sample") +
+  theme_classic(base_size = 10)
+
+
+==============================================================================
+5  Figure S1i and S1j - reactive astrocyte subclusters
+==============================================================================
+
+Data sheet : SC_subcluster_UMAP
+
+Method     : Subcluster labels (resolution 0.3) and OXR1 expression of the 460 re-clustered reactive astrocytes, shown as a combined UMAP and as one panel per subcluster.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("SC_subcluster_UMAP")
+
+ggplot(d, aes(UMAP_1, UMAP_2, colour = subcluster)) +
+  geom_point(size = 0.8) +
+  labs(x = "UMAP_1", y = "UMAP_2", colour = "Subcluster",
+       title = "Reactive Astrocytes Subclusters") +
+  theme_classic(base_size = 10)
+
+ggplot(d, aes(UMAP_1, UMAP_2, colour = OXR1_logexpr)) +
+  geom_point(size = 0.6) +
+  scale_colour_gradientn(colours = c("#2166AC", "#FFFFBF", "#B2182B")) +
+  facet_wrap(~ subcluster, nrow = 1) +
+  labs(x = "UMAP_1", y = "UMAP_2", colour = "Expression",
+       title = "OXR1 Expression on UMAP (by Subcluster)") +
+  theme_classic(base_size = 9)
+
+
+==============================================================================
+6  Figure S1k - OXR1 expression in each subcluster
+==============================================================================
+
+Data sheet : S1k_OXR1_subcluster_summary and S1k_OXR1_subcluster_tests
+
+Method     : Mean OXR1 expression per subcluster and condition, with Wilcoxon rank-sum tests between conditions (p values adjusted by the Benjamini-Hochberg procedure).
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+s <- sh("S1k_OXR1_subcluster_summary")
+t <- sh("S1k_OXR1_subcluster_tests")
+
+ggplot(s, aes(x = factor(subcluster), y = mean_exp, fill = condition)) +
+  geom_col(position = position_dodge(0.8), width = 0.7) +
+  geom_errorbar(aes(ymin = mean_exp - se_exp, ymax = mean_exp + se_exp),
+                position = position_dodge(0.8), width = 0.2) +
+  labs(x = "Subcluster", y = "Expression", fill = "Group",
+       title = "OXR1 Expression in Each Subcluster") +
+  theme_classic(base_size = 10)
+
+t   # per-subcluster statistics used for the significance marks
+
+
+==============================================================================
+7  Figure S1l - KEGG pathways of subcluster 0
+==============================================================================
+
+Data sheet : S1l_KEGG_subcluster0
+
+Method     : KEGG over-representation analysis of the genes differentially expressed between conditions within subcluster 0. Bar length is the gene count; colour is -log10 adjusted p value.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S1l_KEGG_subcluster0") %>%
+  mutate(log10p = -log10(p.adjust)) %>%
+  arrange(log10p) %>%
+  mutate(Description = factor(Description, levels = Description))
+
+ggplot(d, aes(x = Count, y = Description, fill = log10p)) +
+  geom_col(width = 0.7, colour = "grey30", linewidth = 0.2) +
+  geom_text(aes(label = Count), hjust = -0.3, size = 3) +
+  scale_fill_gradient(low = "#D6D6F5", high = "#7B68C8", name = "-log10(p.adj)") +
+  labs(x = "Gene count", y = NULL,
+       title = "KEGG pathways of reactive astro subcluster 0") +
+  theme_bw(base_size = 10)
+
+
+==============================================================================
+8  Figure S1m - KEGG pathways of subcluster 1
+==============================================================================
+
+Data sheet : S1m_KEGG_subcluster1
+
+Method     : KEGG over-representation analysis of the genes differentially expressed between conditions within subcluster 1.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S1m_KEGG_subcluster1") %>%
+  mutate(log10p = -log10(p.adjust)) %>%
+  arrange(log10p) %>%
+  mutate(Description = factor(Description, levels = Description))
+
+ggplot(d, aes(x = Count, y = Description, fill = log10p)) +
+  geom_col(width = 0.7, colour = "grey30", linewidth = 0.2) +
+  geom_text(aes(label = Count), hjust = -0.3, size = 3) +
+  scale_fill_gradient(low = "#D6D6F5", high = "#7B68C8", name = "-log10(p.adj)") +
+  labs(x = "Gene count", y = NULL,
+       title = "KEGG pathways of reactive astro subcluster 1") +
+  theme_bw(base_size = 10)
+
+
+==============================================================================
+9  Figure S2a - OXR1 knockout effects
+==============================================================================
+
+Data sheet : S2a_OXR1_KO_genes
+
+Method     : In-silico OXR1 knockout. For each gene the perturbation analysis returns a distance, a Z score, a fold change and a p value. The volcano plot shows log2 fold change against -log10 p value.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S2a_OXR1_KO_genes") %>%
+  mutate(log2FC = log2(FC),
+         logP  = -log10(p.value),
+         status = ifelse(p.adj < 0.05 & abs(log2FC) > 1, "Regulated", "Not significant"))
+
+ggplot(d, aes(x = log2FC, y = logP, colour = status)) +
+  geom_point(size = 0.9, alpha = 0.7) +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", linewidth = 0.3) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", linewidth = 0.3) +
+  scale_colour_manual(values = c("Not significant" = "grey80", "Regulated" = "#D6604D")) +
+  labs(x = "log2(Regulation Score Fold Change)", y = "-log10(p-value)",
+       title = "OXR1 Knockout Effects") +
+  theme_classic(base_size = 10)
+
+
+==============================================================================
+10  Figure S2b - enriched pathways and processes
+==============================================================================
+
+Data sheet : S2b_OXR1_KO_GO_BP, S2b_OXR1_KO_Reactome, S2b_OXR1_KO_KEGG
+
+Method     : Enrichment of the genes responding to OXR1 knockout in three libraries (GO biological process, Reactome and KEGG). The bar chart displays -log10 p value of the most significant terms.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+bp <- sh("S2b_OXR1_KO_GO_BP")   %>% mutate(Database = "GO Biological Process")
+re <- sh("S2b_OXR1_KO_Reactome") %>% mutate(Database = "Reactome")
+kg <- sh("S2b_OXR1_KO_KEGG")     %>% mutate(Database = "KEGG")
+
+d <- bind_rows(
+    bp %>% select(Term, P.value, Database),
+    re %>% select(Term, P.value, Database),
+    kg %>% select(Term, P.value, Database)) %>%
+  mutate(log10p = -log10(P.value)) %>%
+  group_by(Database) %>% arrange(desc(log10p), .by_group = TRUE) %>%
+  slice_head(n = 5) %>% ungroup()
+
+ggplot(d, aes(x = reorder(Term, log10p), y = log10p, fill = Database)) +
+  geom_col(width = 0.7) +
+  coord_flip() +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", colour = "red") +
+  labs(x = NULL, y = "-log10(p-value)", title = "Gene Set Enrichment Analysis") +
+  theme_bw(base_size = 10)
+
+
+==============================================================================
+11  Figure S2c - dark-red module eigengene
+==============================================================================
+
+Data sheet : S2c_darkred_eigengene and S2c_darkred_wilcox
+
+Method     : Eigengene of the dark-red co-expression module in the 14 metacells, compared between control and Abeta metacells by a Wilcoxon rank-sum test.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S2c_darkred_eigengene")
+w <- sh("S2c_darkred_wilcox")
+
+ggplot(d, aes(x = condition, y = ME, fill = condition)) +
+  geom_boxplot(width = 0.55, outlier.shape = NA) +
+  geom_jitter(width = 0.12, size = 1.6) +
+  labs(x = NULL, y = "Module eigengene", title = "Darkred module") +
+  theme_classic(base_size = 10) +
+  theme(legend.position = "none")
+
+w   # W statistic and p value of the comparison
+
+
+==============================================================================
+12  Figure S2d - module-condition relationships
+==============================================================================
+
+Data sheet : S2d_module_trait
+
+Method     : Pearson correlation between each module eigengene and condition across the 14 metacells, shown as a heatmap.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S2d_module_trait")
+d$Module <- factor(d$Module, levels = d$Module[order(d$r)])
+
+ggplot(d, aes(x = "Condition", y = Module, fill = r)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%.2f", r)), size = 2.6) +
+  scale_fill_gradient2(low = "#4575B4", mid = "white", high = "#D73027",
+                       midpoint = 0, limits = c(-1, 1), name = "Correlation") +
+  labs(x = NULL, y = NULL, title = "Module-condition relationships") +
+  theme_minimal(base_size = 9)
+
+
+==============================================================================
+13  Figure S2e - module membership of the dark-red module
+==============================================================================
+
+Data sheet : S2e_MM_GS
+
+Method     : Module membership (correlation of each gene with the dark-red module eigengene) against gene significance; the histogram shows the distribution of module membership.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S2e_MM_GS")
+
+ggplot(d, aes(x = MM, y = GS)) +
+  geom_point(size = 0.9, colour = "grey40") +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  labs(x = "Module Membership (correlation with ME)", y = "Gene Significance",
+       title = "Module darkred genes: MM vs GS") +
+  theme_classic(base_size = 10)
+
+ggplot(d, aes(x = MM)) +
+  geom_histogram(bins = 30, fill = "grey70", colour = "white") +
+  geom_vline(xintercept = d$MM[d$Gene == "OXR1"], linetype = "dashed", colour = "#D73027") +
+  labs(x = "Module Membership", y = "Frequency",
+       title = "Distribution of MM in darkred module") +
+  theme_classic(base_size = 10)
+
+==============================================================================
+14  Figure S1h - OXR1 in reactive versus homeostatic astrocytes (human SEA-AD)
+==============================================================================
+
+Data sheet : S1h_OXR1_donors, S1h_OXR1_summary, S1h_threshold_sensitivity
+
+Method     : Astrocytes from the SEA-AD single-nucleus RNA-sequencing dataset were classified within each donor by a marker-detection reactivity score (proportion of six reactive markers detected minus proportion of three homeostatic markers detected). The top and bottom deciles of each donor were compared by donor-level pseudobulk CPM with a two-sided paired Wilcoxon signed-rank test.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d <- sh("S1h_OXR1_donors")
+s <- sh("S1h_OXR1_summary")
+
+# per-donor points with group means and standard errors
+long <- d %>%
+  select(region, donor, OXR1_CPM_reactive, OXR1_CPM_homeostatic) %>%
+  pivot_longer(c(OXR1_CPM_reactive, OXR1_CPM_homeostatic),
+               names_to = "state", values_to = "CPM") %>%
+  mutate(state = recode(state,
+                        OXR1_CPM_reactive    = "Reactive",
+                        OXR1_CPM_homeostatic = "Homeostatic"))
+
+agg <- long %>%
+  group_by(region, state) %>%
+  summarise(mean_CPM = mean(CPM), sem = sd(CPM) / sqrt(n()), .groups = "drop")
+
+ggplot(agg, aes(x = state, y = mean_CPM, fill = state)) +
+  geom_col(width = 0.6) +
+  geom_errorbar(aes(ymin = mean_CPM, ymax = mean_CPM + sem), width = 0.15) +
+  geom_point(data = long, aes(x = state, y = CPM),
+             inherit.aes = FALSE, size = 0.6, alpha = 0.35) +
+  facet_wrap(~ region, nrow = 1) +
+  labs(x = NULL, y = "OXR1 (CPM)", title = "OXR1 homeostatic vs reactive") +
+  theme_classic(base_size = 10)
+
+# paired test per region (matches the p values in the summary sheet)
+for (r in unique(d$region)) {
+  x <- d$OXR1_CPM_reactive[d$region == r]
+  y <- d$OXR1_CPM_homeostatic[d$region == r]
+  cat(r, "n =", length(x), "paired Wilcoxon p =",
+      format(wilcox.test(x, y, paired = TRUE)$p.value, digits = 4), "\n")
+}
+
+s   # group means, percentage change and p values used in the figure legend
+
+==============================================================================
+15  Figure S2f and S2g - enrichment of dark-red module genes (Metascape)
+==============================================================================
+
+Data sheet : S2f_module_genes, S2f_plot_terms, S2f_enrichment, S2g_module_genes_OXR1, S2g_plot_terms, S2g_enrichment
+
+Method     : Panel f uses all 212 genes of the dark-red co-expression module, panel g the 51 module genes whose correlation with OXR1 exceeds 0.3. Both lists were submitted to Metascape; the analysis reports over-representation in GO biological process, Reactome and KEGG gene sets with a hypergeometric test and Benjamini-Hochberg adjustment. LogP is log10 of the enrichment P value and q is its adjusted value; the bar length in both panels is -LogP and the red dotted line marks P = 0.05. Nine of the ten terms exported for panel f are drawn (cellular response to corticosteroid stimulus is omitted); all ten terms of panel g are drawn.
+
+Packages   : R 4.2 or newer; readxl, ggplot2, dplyr, stringr
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+library(readxl); library(ggplot2); library(dplyr); library(stringr)
+
+XLS <- file.path("..", "Source_Data", "Figure1_S1_S2_singlecell_source_data_EN.xlsx")
+f <- read_excel(XLS, sheet = "S2f_plot_terms", skip = 2)
+g <- read_excel(XLS, sheet = "S2g_plot_terms", skip = 2)
+
+# ---------------- panel f: horizontal bars ----------------
+f <- f %>% filter(Displayed == "Yes") %>% arrange(negLogP)
+f$Description <- factor(str_wrap(f$Description, width = 42),
+                        levels = str_wrap(f$Description, width = 42))
+
+ggplot(f, aes(x = negLogP, y = Description, fill = Category)) +
+  geom_col(width = 0.62, colour = "grey20", linewidth = 0.3) +
+  geom_text(aes(label = sprintf("%.2f", negLogP)), hjust = -0.25, size = 3, colour = "grey20") +
+  geom_vline(xintercept = -log10(0.05), linetype = "dotted", colour = "red") +
+  scale_fill_manual(values = c("GO Biological Processes" = "#4C72B0",
+                               "Reactome Gene Sets" = "#DD8452"), name = "Category") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(x = expression(-log[10](P-value)), y = NULL,
+       title = "Gene Set Enrichment Analysis") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", panel.grid.major.y = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# ---------------- panel g: vertical bars ----------------
+g <- g %>% filter(Displayed == "Yes") %>% arrange(desc(negLogP))
+g$Description <- factor(g$Description, levels = g$Description)
+
+ggplot(g, aes(x = Description, y = negLogP, fill = Category)) +
+  geom_col(width = 0.6, colour = "grey20", linewidth = 0.3) +
+  geom_text(aes(label = sprintf("%.2f", negLogP)), vjust = -0.45, size = 2.9, colour = "grey20") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dotted", colour = "red") +
+  scale_fill_manual(values = c("GO Biological Processes" = "#4C72B0",
+                               "KEGG Pathway" = "#DD8452",
+                               "Reactome Gene Sets" = "#55A868"), name = "Category") +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 18)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(x = NULL, y = expression(-log[10](P-value)),
+       title = "Gene Set Enrichment Analysis") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# the complete Metascape tables (all exported terms) are in S2f_enrichment and S2g_enrichment
+
+==============================================================================
+16  Figure S2h and S2i - OXR1 interaction network and functional clustering
+==============================================================================
+
+Data sheet : S2h_MIST_interactions, S2h_interactors, S2i_categories
+
+Method     : Known and predicted protein-protein interactions of OXR1 were retrieved from the MIST database. The exported table gives both partners, the PubMed identifiers of the supporting experiments, the species in which the interaction was observed, the MIST rank, the source databases and the evidence codes: direct entries are experimentally validated interactions, indirect entries are interactions inferred from homologous proteins of the TLDc family. Interactors were grouped into synaptic function, lipid metabolism, Abeta metabolism, cytoskeleton and other categories for the chord diagram.
+
+Packages   : R 4.2 or newer; igraph, dplyr, tidyr, readxl
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+nodes <- sh("S2h_interactors")
+edges <- sh("S2h_MIST_interactions")
+cat_  <- sh("S2i_categories")
+
+# edge list for the network: Validated = experimental evidence in the Direct column,
+# Inferred = interaction transferred from a homologous protein (interolog query)
+el <- edges %>% select(Protein_A, Protein_B, Evidence, Database, Taxon)
+
+library(igraph)
+g <- graph_from_data_frame(el, vertices = nodes, directed = FALSE)
+plot(g, vertex.size = 12, vertex.label.cex = 0.7,
+     edge.color = ifelse(edge_attr(g, "Evidence") == "Validated", "#D73027", "grey65"))
+
+# protein-by-category matrix behind the chord diagram
+cat_ %>% mutate(value = 1) %>%
+  pivot_wider(names_from = Functional_category, values_from = value, values_fill = 0)
+
+
+==============================================================================
+17  Figure S2j - interacting protein levels across AD, AsymAD and control (BH-adjusted p values)
+==============================================================================
+
+Data sheet : S2j_protein_expression, S2j_group_means, S2j_group_z, S2j_pairwise_p
+
+Method     : Protein abundance was taken from the deep multilayer brain proteome of Bai et al. For each protein the group-mean expression was z-scored across the three diagnostic groups and drawn as a heatmap. The three pairwise comparisons were tested with two-sided Wilcoxon rank-sum tests and adjusted by the Benjamini-Hochberg procedure within each comparison; the panel is annotated with the adjusted p values.
+
+
+------------------------------------------------------------------------------
+R code
+------------------------------------------------------------------------------
+
+d  <- sh("S2j_protein_expression")
+gz <- sh("S2j_group_z")
+pw <- sh("S2j_pairwise_p")
+
+fmt <- function(p) ifelse(p < 0.001, formatC(p, format = "e", digits = 1),
+                          formatC(p, format = "f", digits = 3))
+
+ord <- c("ERC2", "TENM2", "ST13", "GSK3A", "GSK3B", "NCAM1", "MYO1C",
+         "TENM1", "IQGAP1", "ADAM10", "DDHD2", "LIG4", "NTN1")
+lev <- c("Control", "AsymAD", "AD",
+         "AsymAD vs Control", "AD vs Control", "AD vs AsymAD")
+
+gz$Column <- factor(as.character(gz$Group), levels = lev)
+pw$Column <- factor(as.character(pw$Comparison), levels = lev)
+gz$Protein <- factor(gz$Protein, levels = rev(ord))
+pw$Protein <- factor(pw$Protein, levels = rev(ord))
+pw$label <- fmt(pw$p_adj)
+
+ggplot() +
+  geom_tile(data = gz, aes(x = Column, y = Protein, fill = z),
+            colour = "white", linewidth = 0.6, na.rm = TRUE) +
+  geom_text(data = pw, aes(x = Column, y = Protein, label = label), size = 2.7) +
+  scale_fill_gradient2(low = "#2e90ad", mid = "#fdfdfb", high = "#ee8c0f",
+                       midpoint = 0, name = "Z-score", na.value = "white") +
+  scale_x_discrete(drop = FALSE,
+                   labels = c("Control", "AsymAD", "AD",
+                              "AsymAD\nvs Control", "AD\nvs Control", "AD\nvs AsymAD")) +
+  labs(x = NULL, y = NULL,
+       title = "OXR1-interacting protein expression levels") +
+  theme_minimal(base_size = 9) +
+  theme(panel.grid = element_blank(), axis.text.x = element_text(size = 8))
+
+
+==============================================================================
+End of document
+==============================================================================
